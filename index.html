@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>高知県 神社マップ</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    header {
+      padding: 10px;
+      background: #1f2937;
+      color: white;
+      text-align: center;
+    }
+
+    #controls {
+      padding: 10px;
+      background: #f3f4f6;
+    }
+
+    select {
+      width: 100%;
+      padding: 10px;
+      font-size: 16px;
+    }
+
+    #map {
+      height: calc(100vh - 120px);
+    }
+
+    .popup-img {
+      width: 100%;
+      max-width: 200px;
+      border-radius: 6px;
+      margin-top: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h2>⛩ 高知県 神社マップ</h2>
+</header>
+
+<div id="controls">
+  <select id="cityFilter">
+    <option value="">すべての市町村</option>
+  </select>
+</div>
+
+<div id="map"></div>
+
+<script>
+  const map = L.map("map").setView([33.5597, 133.5311], 10);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "© OpenStreetMap contributors"
+  }).addTo(map);
+
+  const markers = [];
+  let shrineData = [];
+
+  const overpassUrl = "https://overpass-api.de/api/interpreter";
+
+  const query = `
+  [out:json];
+  area["name"="高知県"]->.a;
+  (
+    node["amenity"="place_of_worship"]["religion"="shinto"](area.a);
+    way["amenity"="place_of_worship"]["religion"="shinto"](area.a);
+  );
+  out center tags;
+  `;
+
+  fetch(overpassUrl, {
+    method: "POST",
+    body: query
+  })
+    .then(res => res.json())
+    .then(data => {
+      shrineData = data.elements.map(el => {
+        const tags = el.tags || {};
+        return {
+          name: tags.name || "名称不明",
+          city: tags["addr:city"] || tags["addr:town"] || "不明",
+          lat: el.lat || el.center?.lat,
+          lng: el.lon || el.center?.lon,
+          image: tags.image || null,
+          wikimedia: tags.wikimedia_commons || null
+        };
+      }).filter(s => s.lat && s.lng);
+
+      populateCityFilter();
+      renderMarkers();
+    });
+
+  function populateCityFilter() {
+    const select = document.getElementById("cityFilter");
+    const cities = [...new Set(shrineData.map(s => s.city))].sort();
+
+    cities.forEach(city => {
+      const option = document.createElement("option");
+      option.value = city;
+      option.textContent = city;
+      select.appendChild(option);
+    });
+  }
+
+  function getImageHtml(shrine) {
+    if (shrine.image) {
+      return `<img class="popup-img" src="${shrine.image}" alt="神社の写真">`;
+    }
+
+    if (shrine.wikimedia) {
+      const fileName = shrine.wikimedia.replace("File:", "");
+      const encoded = encodeURIComponent(fileName);
+      return `
+        <img class="popup-img"
+          src="https://commons.wikimedia.org/wiki/Special:FilePath/${encoded}?width=300"
+          alt="神社の写真">
+      `;
+    }
+
+    return `<p>📷 写真なし</p>`;
+  }
+
+  function renderMarkers(city = "") {
+    markers.forEach(m => map.removeLayer(m));
+    markers.length = 0;
+
+    shrineData
+      .filter(s => !city || s.city === city)
+      .forEach(s => {
+        const popupHtml = `
+          <strong>⛩ ${s.name}</strong><br>
+          ${s.city}<br>
+          ${getImageHtml(s)}
+        `;
+
+        const marker = L.marker([s.lat, s.lng])
+          .addTo(map)
+          .bindPopup(popupHtml);
+
+        markers.push(marker);
+      });
+  }
+
+  document.getElementById("cityFilter").addEventListener("change", e => {
+    renderMarkers(e.target.value);
+  });
+</script>
+
+</body>
+</html>
