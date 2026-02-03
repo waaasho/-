@@ -155,7 +155,7 @@
             if (markerGroup.getLayers().length > 0) map.fitBounds(markerGroup.getBounds(), { padding: [50, 50] });
 
         } catch (e) {
-            console.error(e); alert("データ取得エラー。時間をおいて試してください。");
+            console.error(e); 
         } finally {
             document.getElementById('spinner').style.display = 'none';
         }
