@@ -1,163 +1,165 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>高知県 神社マップ</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>高知 神社探訪マップ V2</title>
 
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 
-  <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-
-    header {
-      padding: 10px;
-      background: #1f2937;
-      color: white;
-      text-align: center;
-    }
-
-    #controls {
-      padding: 10px;
-      background: #f3f4f6;
-    }
-
-    select {
-      width: 100%;
-      padding: 10px;
-      font-size: 16px;
-    }
-
-    #map {
-      height: calc(100vh - 120px);
-    }
-
-    .popup-img {
-      width: 100%;
-      max-width: 200px;
-      border-radius: 6px;
-      margin-top: 6px;
-    }
-  </style>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; background: #f0f2f5; }
+        #map { height: 100vh; width: 100vw; z-index: 1; }
+        
+        /* スマホ向け操作パネル */
+        .ui-panel {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; width: 95%; max-width: 400px;
+            background: rgba(255, 255, 255, 0.95); padding: 8px 12px;
+            border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+        }
+        .popup-img { width: 100%; height: 150px; object-fit: cover; border-radius: 6px; margin-bottom: 8px; }
+        .loading-spinner { display: none; margin-left: 10px; }
+        
+        /* ポップアップ内のスタイル */
+        .leaflet-popup-content { margin: 10px; width: 260px !important; }
+        .comment-section { background: #f8f9fa; padding: 8px; border-radius: 6px; margin-top: 10px; font-size: 0.9rem; }
+        .saved-comment { border-bottom: 1px solid #dee2e6; padding-bottom: 4px; margin-bottom: 4px; color: #333; }
+        .no-comment { color: #777; font-style: italic; font-size: 0.8rem; }
+        .btn-google { background-color: #4285F4; color: white; border: none; }
+        .btn-google:hover { background-color: #357abd; color: white; }
+    </style>
 </head>
 <body>
 
-<header>
-  <h2>⛩ 高知県 神社マップ</h2>
-</header>
-
-<div id="controls">
-  <select id="cityFilter">
-    <option value="">すべての市町村</option>
-  </select>
+<div class="ui-panel">
+    <div class="d-flex align-items-center justify-content-between">
+        <select id="city-select" class="form-select form-select-sm me-2" style="flex-grow: 1;">
+            <option value="高知県">高知県 全域 (低速)</option>
+            <option value="高知市" selected>高知市</option>
+            <option value="南国市">南国市</option>
+            <option value="四万十市">四万十市</option>
+            <option value="香南市">香南市</option>
+            <option value="土佐市">土佐市</option>
+            <option value="室戸市">室戸市</option>
+            <option value="安芸市">安芸市</option>
+            <option value="宿毛市">宿毛市</option>
+            <option value="土佐清水市">土佐清水市</option>
+            <option value="須崎市">須崎市</option>
+            <option value="いの町">いの町</option>
+            <option value="佐川町">佐川町</option>
+        </select>
+        <button class="btn btn-primary btn-sm text-nowrap px-3" onclick="fetchShrines()">検索</button>
+        <div id="spinner" class="spinner-border spinner-border-sm text-primary loading-spinner"></div>
+    </div>
 </div>
 
 <div id="map"></div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <script>
-  const map = L.map("map").setView([33.5597, 133.5311], 10);
+    const map = L.map('map', { zoomControl: false }).setView([33.5597, 133.5311], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM contributors' }).addTo(map);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    const markerGroup = L.layerGroup().addTo(map);
 
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap contributors"
-  }).addTo(map);
-
-  const markers = [];
-  let shrineData = [];
-
-  const overpassUrl = "https://overpass-api.de/api/interpreter";
-
-  const query = `
-  [out:json];
-  area["name"="高知県"]->.a;
-  (
-    node["amenity"="place_of_worship"]["religion"="shinto"](area.a);
-    way["amenity"="place_of_worship"]["religion"="shinto"](area.a);
-  );
-  out center tags;
-  `;
-
-  fetch(overpassUrl, {
-    method: "POST",
-    body: query
-  })
-    .then(res => res.json())
-    .then(data => {
-      shrineData = data.elements.map(el => {
-        const tags = el.tags || {};
-        return {
-          name: tags.name || "名称不明",
-          city: tags["addr:city"] || tags["addr:town"] || "不明",
-          lat: el.lat || el.center?.lat,
-          lng: el.lon || el.center?.lon,
-          image: tags.image || null,
-          wikimedia: tags.wikimedia_commons || null
-        };
-      }).filter(s => s.lat && s.lng);
-
-      populateCityFilter();
-      renderMarkers();
+    // ⛩️ 鳥居アイコンの定義 (Data URIで画像を埋め込み)
+    const toriiIcon = L.icon({
+        iconUrl: 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"%3E%3Cpath fill="%23d63031" d="M106.7 32h298.6v42.7H106.7zM21.3 74.7h469.4v64H21.3z"/%3E%3Cpath fill="%23d63031" d="M85.3 74.7h64v416h-64zM362.7 74.7h64v416h-64z"/%3E%3Cpath fill="%23d63031" d="M85.3 181.3h341.4v53.3H85.3z"/%3E%3C/svg%3E',
+        iconSize: [40, 40], // アイコンのサイズ
+        iconAnchor: [20, 40], // アイコンの先端位置
+        popupAnchor: [0, -38] // ポップアップが出る位置
     });
 
-  function populateCityFilter() {
-    const select = document.getElementById("cityFilter");
-    const cities = [...new Set(shrineData.map(s => s.city))].sort();
+    async function fetchShrines() {
+        const cityName = document.getElementById('city-select').value;
+        document.getElementById('spinner').style.display = 'inline-block';
+        markerGroup.clearLayers();
 
-    cities.forEach(city => {
-      const option = document.createElement("option");
-      option.value = city;
-      option.textContent = city;
-      select.appendChild(option);
-    });
-  }
+        // Overpass API クエリ (神道のみ対象)
+        const query = `[out:json][timeout:30];area["name"="${cityName}"]->.a;(node["amenity"="place_of_worship"]["religion"="shinto"](area.a);way["amenity"="place_of_worship"]["religion"="shinto"](area.a););out center;`;
 
-  function getImageHtml(shrine) {
-    if (shrine.image) {
-      return `<img class="popup-img" src="${shrine.image}" alt="神社の写真">`;
+        try {
+            const res = await fetch("https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(query));
+            const data = await res.json();
+            
+            if (data.elements.length === 0) alert("神社が見つかりませんでした。");
+
+            data.elements.forEach(el => {
+                const lat = el.lat || el.center.lat;
+                const lon = el.lon || el.center.lon;
+                const name = el.tags.name || "名称不明の神社";
+                const shrineId = `shrine_${lat}_${lon}`; // コメント保存用のユニークID
+
+                // 写真 (Wikimediaがあれば表示)
+                let photoHtml = "";
+                if (el.tags.wikimedia_commons) {
+                    const imgUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${el.tags.wikimedia_commons.replace('File:', '')}?width=300`;
+                    photoHtml = `<img src="${imgUrl}" class="popup-img" alt="${name}">`;
+                }
+
+                // ポップアップの内容を構築
+                const popupContent = document.createElement('div');
+                popupContent.innerHTML = `
+                    <h6 class="fw-bold mb-2">${name}</h6>
+                    ${photoHtml}
+                    <div class="d-grid gap-2 mb-3">
+                        <a href="https://www.google.com/maps/search/?api=1&query=${name}+高知県" target="_blank" class="btn btn-google btn-sm">
+                            <i class="bi bi-google"></i> Googleマップで写真を見る
+                        </a>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}" target="_blank" class="btn btn-outline-primary btn-sm">
+                           📍ここへのルート案内
+                        </a>
+                    </div>
+                    <div class="comment-section">
+                        <strong>自分のメモ:</strong>
+                        <div id="comment-display-${shrineId}" class="mb-2 mt-1"></div>
+                        <textarea id="comment-input-${shrineId}" class="form-control form-control-sm" rows="2" placeholder="ここにコメントを入力..."></textarea>
+                        <button class="btn btn-secondary btn-sm w-100 mt-2" onclick="saveComment('${shrineId}')">保存する</button>
+                    </div>
+                `;
+
+                const marker = L.marker([lat, lon], { icon: toriiIcon }) // 鳥居アイコンを適用
+                    .bindPopup(popupContent);
+                
+                // ポップアップが開いた時にコメントを読み込む
+                marker.on('popupopen', () => loadComment(shrineId));
+                markerGroup.addLayer(marker);
+            });
+
+            if (markerGroup.getLayers().length > 0) map.fitBounds(markerGroup.getBounds(), { padding: [50, 50] });
+
+        } catch (e) {
+            console.error(e); alert("データ取得エラー。時間をおいて試してください。");
+        } finally {
+            document.getElementById('spinner').style.display = 'none';
+        }
     }
 
-    if (shrine.wikimedia) {
-      const fileName = shrine.wikimedia.replace("File:", "");
-      const encoded = encodeURIComponent(fileName);
-      return `
-        <img class="popup-img"
-          src="https://commons.wikimedia.org/wiki/Special:FilePath/${encoded}?width=300"
-          alt="神社の写真">
-      `;
+    // --- コメント機能 (localStorage使用) ---
+    function saveComment(id) {
+        const input = document.getElementById(`comment-input-${id}`);
+        const comment = input.value.trim();
+        if (comment) {
+            localStorage.setItem(id, comment);
+            loadComment(id); // 表示を更新
+            input.value = ''; // 入力欄をクリア
+        }
     }
 
-    return `<p>📷 写真なし</p>`;
-  }
+    function loadComment(id) {
+        const display = document.getElementById(`comment-display-${id}`);
+        const saved = localStorage.getItem(id);
+        if (saved) {
+            display.innerHTML = `<div class="saved-comment">${saved.replace(/\n/g, '<br>')}</div>`;
+        } else {
+            display.innerHTML = '<div class="no-comment">まだコメントはありません</div>';
+        }
+    }
 
-  function renderMarkers(city = "") {
-    markers.forEach(m => map.removeLayer(m));
-    markers.length = 0;
-
-    shrineData
-      .filter(s => !city || s.city === city)
-      .forEach(s => {
-        const popupHtml = `
-          <strong>⛩ ${s.name}</strong><br>
-          ${s.city}<br>
-          ${getImageHtml(s)}
-        `;
-
-        const marker = L.marker([s.lat, s.lng])
-          .addTo(map)
-          .bindPopup(popupHtml);
-
-        markers.push(marker);
-      });
-  }
-
-  document.getElementById("cityFilter").addEventListener("change", e => {
-    renderMarkers(e.target.value);
-  });
+    fetchShrines(); // 初期ロード
 </script>
-
 </body>
 </html>
